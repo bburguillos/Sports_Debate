@@ -57,7 +57,7 @@ st.markdown(
 }
 
 .hero-sub {
-    font-size: 1.06rem;
+    font-size: 1.05rem;
     opacity: .82;
 }
 
@@ -83,18 +83,25 @@ st.markdown(
     background: rgba(21,101,192,.07);
 }
 
-.phase-card {
-    border: 1px solid rgba(120,120,120,.25);
-    border-radius: 12px;
-    padding: 12px 14px;
-    margin-bottom: 12px;
-}
-
 .data-note {
     border-left: 5px solid #00897b;
     border-radius: 8px;
     padding: 10px 12px;
     background: rgba(0,137,123,.07);
+}
+
+.conf-high {
+    border-left: 5px solid #2e7d32;
+    border-radius: 8px;
+    padding: 10px 12px;
+    background: rgba(46,125,50,.08);
+}
+
+.conf-med {
+    border-left: 5px solid #f9a825;
+    border-radius: 8px;
+    padding: 10px 12px;
+    background: rgba(249,168,37,.08);
 }
 
 </style>
@@ -158,7 +165,7 @@ TRUSTED_SOURCES = [
     "MLSsoccer.com",
     "Formula 1",
     "Autosport",
-    "Motorsport.com",
+    "Motorsport",
 ]
 
 
@@ -220,6 +227,7 @@ TOPIC_WORDS = {
         "worried",
         "problem",
         "falling apart",
+        "rough stretch",
     ],
 
     "momentum": [
@@ -256,15 +264,6 @@ TOPIC_WORDS = {
         "run prevention",
         "allowing",
         "conceding",
-    ],
-
-    "player_award": [
-        "mvp",
-        "cy young",
-        "rookie of the year",
-        "hart trophy",
-        "award race",
-        "ballon",
     ],
 
     "roster": [
@@ -354,7 +353,6 @@ def safe_get(
         headers={
             "User-Agent":
                 "Mozilla/5.0 Sports Debate Classroom App",
-
             "Accept":
                 "application/json,text/plain,*/*",
         },
@@ -428,9 +426,7 @@ def source_is_trusted(source):
     if not source:
         return False
 
-    source_lower = (
-        source.lower()
-    )
+    source_lower = source.lower()
 
     return any(
         trusted.lower()
@@ -442,7 +438,7 @@ def source_is_trusted(source):
 
 
 # ============================================================
-# STRICT NEWS DATE FILTERING
+# STRICT DATE CHECK
 # ============================================================
 
 def feed_date_to_datetime(entry):
@@ -472,38 +468,37 @@ def feed_date_to_datetime(entry):
         return None
 
 
-def window_hours(window):
-    return {
-        "Past 24 Hours": 24,
-        "Past 48 Hours": 48,
-        "Past 7 Days": 168,
-    }[window]
-
-
-def article_is_fresh(
+def article_age_hours(
     published_dt,
-    window,
 ):
     if published_dt is None:
-        return False
+        return 999999
 
-    age = (
+    return (
         now_utc()
         - published_dt
     ).total_seconds() / 3600
 
-    # Reject future timestamps and
-    # anything older than the selected window.
+
+def article_is_fresh(
+    published_dt,
+    max_hours,
+):
+    if published_dt is None:
+        return False
+
+    age = article_age_hours(
+        published_dt
+    )
+
     return (
         age >= -3
-        and age <= window_hours(
-            window
-        )
+        and age <= max_hours
     )
 
 
 # ============================================================
-# HISTORICAL / ARCHIVE FILTER
+# HISTORICAL FILTER
 # ============================================================
 
 def looks_historical(title):
@@ -524,16 +519,15 @@ def looks_historical(title):
     current = now_utc().year
 
     for year_text in years:
-        year = int(year_text)
+        year = int(
+            year_text
+        )
 
         if year < current - 2:
-            # Historical dates alone are not always bad,
-            # but old year + archive/box-score language is.
             if (
                 "box score" in text
                 or "season" in text
                 or "game" in text
-                or "team" in text
                 or "roster" in text
             ):
                 return True
@@ -542,16 +536,8 @@ def looks_historical(title):
 
 
 # ============================================================
-# GOOGLE NEWS
+# NEWS SEARCH
 # ============================================================
-
-def news_window_code(window):
-    return {
-        "Past 24 Hours": "1d",
-        "Past 48 Hours": "2d",
-        "Past 7 Days": "7d",
-    }[window]
-
 
 @st.cache_data(
     ttl=300,
@@ -559,16 +545,20 @@ def news_window_code(window):
 )
 def scan_google_news(
     sport,
-    window,
+    max_hours,
 ):
+    days = max(
+        1,
+        int(
+            max_hours / 24
+        )
+    )
+
     query = (
         SPORT_CONFIG[
             sport
         ]["query"]
-        + " when:"
-        + news_window_code(
-            window
-        )
+        + f" when:{days}d"
     )
 
     url = (
@@ -631,7 +621,7 @@ def scan_google_news(
 
         if not article_is_fresh(
             published_dt,
-            window,
+            max_hours,
         ):
             continue
 
@@ -687,15 +677,14 @@ def scan_google_news(
 
 
 # ============================================================
-# SEASON PHASE DETECTOR
+# SPORT PHASE
 # ============================================================
 
 def sport_phase(sport):
-    now = now_utc()
-    month = now.month
+    month = now_utc().month
 
     if sport == "MLB":
-        if month in [3]:
+        if month == 3:
             return "Preseason"
 
         if month in [
@@ -714,36 +703,45 @@ def sport_phase(sport):
         ]:
             return "Regular Season"
 
-        if month in [1, 2]:
+        if month in [
+            1, 2
+        ]:
             return "Postseason"
 
         return "Offseason"
 
     if sport == "NBA":
         if month in [
-            10, 11, 12, 1, 2, 3, 4
+            10, 11, 12,
+            1, 2, 3, 4
         ]:
             return "Regular Season"
 
-        if month in [5, 6]:
+        if month in [
+            5, 6
+        ]:
             return "Postseason"
 
         return "Offseason"
 
     if sport == "NHL":
         if month in [
-            10, 11, 12, 1, 2, 3, 4
+            10, 11, 12,
+            1, 2, 3, 4
         ]:
             return "Regular Season"
 
-        if month in [5, 6]:
+        if month in [
+            5, 6
+        ]:
             return "Postseason"
 
         return "Offseason"
 
     if sport == "MLS":
         if month in [
-            2, 3, 4, 5, 6, 7, 8, 9
+            2, 3, 4, 5,
+            6, 7, 8, 9
         ]:
             return "Regular Season"
 
@@ -756,7 +754,8 @@ def sport_phase(sport):
 
     if sport == "F1":
         if month in [
-            3, 4, 5, 6, 7, 8, 9, 10, 11
+            3, 4, 5, 6,
+            7, 8, 9, 10, 11
         ]:
             return "Championship Season"
 
@@ -766,7 +765,7 @@ def sport_phase(sport):
 
 
 # ============================================================
-# TOPIC CLASSIFICATION
+# TOPIC DETECTION
 # ============================================================
 
 def classify_topic(title):
@@ -783,9 +782,6 @@ def classify_topic(title):
             if phrase in text
         )
 
-    if not scores:
-        return None
-
     topic = max(
         scores,
         key=scores.get,
@@ -797,8 +793,27 @@ def classify_topic(title):
     return topic
 
 
+def broad_topic(topic):
+    if topic in [
+        "concern",
+        "offense",
+        "defense",
+    ]:
+        return "current_performance"
+
+    if topic in [
+        "momentum",
+        "contender",
+    ]:
+        return "team_outlook"
+
+    if topic == "postseason":
+        return "postseason"
+
+    return topic
+
+
 def phase_topic_allowed(
-    sport,
     phase,
     topic,
 ):
@@ -808,26 +823,17 @@ def phase_topic_allowed(
     if phase == "Offseason":
         return False
 
-    # In the postseason, don't create
-    # "playoff contender" questions.
     if (
         phase == "Postseason"
         and topic == "contender"
     ):
         return False
 
-    # Postseason stories are especially useful.
-    if (
-        phase == "Postseason"
-        and topic == "postseason"
-    ):
-        return True
-
     return True
 
 
 # ============================================================
-# TEAM / ENTITY LISTS
+# TEAM LISTS
 # ============================================================
 
 @st.cache_data(
@@ -1146,8 +1152,8 @@ def find_entity(
         )
 
         if score > best_score:
-            best_score = score
             best = entity
+            best_score = score
 
     if best_score < 6:
         return None
@@ -1156,7 +1162,7 @@ def find_entity(
 
 
 # ============================================================
-# GENERIC GAME SNAPSHOT HELPERS
+# STATS HELPERS
 # ============================================================
 
 def result_record(games):
@@ -1176,9 +1182,13 @@ def result_record(games):
     )
 
     if ties:
-        return f"{wins}-{losses}-{ties}"
+        return (
+            f"{wins}-{losses}-{ties}"
+        )
 
-    return f"{wins}-{losses}"
+    return (
+        f"{wins}-{losses}"
+    )
 
 
 def recent_results(
@@ -1195,49 +1205,37 @@ def recent_results(
 
 def average_scored(
     games,
-    n=None,
 ):
-    subset = (
-        games[-n:]
-        if n
-        else games
-    )
-
-    if not subset:
+    if not games:
         return None
 
     return (
         sum(
             game["scored"]
-            for game in subset
+            for game in games
         )
-        / len(subset)
+        / len(games)
     )
 
 
 def average_allowed(
     games,
-    n=None,
 ):
-    subset = (
-        games[-n:]
-        if n
-        else games
-    )
-
-    if not subset:
+    if not games:
         return None
 
     return (
         sum(
             game["allowed"]
-            for game in subset
+            for game in games
         )
-        / len(subset)
+        / len(games)
     )
 
 
-def win_percentage(games):
+def win_percentage(
+    games,
+):
     if not games:
         return None
 
@@ -1246,27 +1244,33 @@ def win_percentage(games):
         for game in games
     )
 
-    return wins / len(games)
+    return (
+        wins / len(games)
+    )
 
 
 # ============================================================
-# ESPN GAME DATA
+# ESPN TEAM GAME DATA
 # ============================================================
 
-def espn_current_season(sport):
+def espn_current_season(
+    sport,
+):
     now = now_utc()
 
     if sport == "NBA":
-        if now.month >= 7:
-            return now.year + 1
-
-        return now.year
+        return (
+            now.year + 1
+            if now.month >= 7
+            else now.year
+        )
 
     if sport == "NFL":
-        if now.month <= 2:
-            return now.year - 1
-
-        return now.year
+        return (
+            now.year - 1
+            if now.month <= 2
+            else now.year
+        )
 
     return now.year
 
@@ -1296,53 +1300,11 @@ def espn_schedule(
 
 
 def espn_event_phase(event):
-    text_parts = []
-
-    season_type = event.get(
-        "seasonType",
-        {},
-    )
-
-    if isinstance(
-        season_type,
-        dict,
-    ):
-        text_parts.extend([
-            str(
-                season_type.get(
-                    "name",
-                    ""
-                )
-            ),
-            str(
-                season_type.get(
-                    "type",
-                    ""
-                )
-            ),
-        ])
-
-    competitions = event.get(
-        "competitions",
-        [],
-    )
-
-    if competitions:
-        competition = (
-            competitions[0]
+    text = str(
+        event.get(
+            "seasonType",
+            ""
         )
-
-        text_parts.append(
-            str(
-                competition.get(
-                    "type",
-                    ""
-                )
-            )
-        )
-
-    text = " ".join(
-        text_parts
     ).lower()
 
     if (
@@ -1383,7 +1345,9 @@ def espn_games_for_team(
         if not competitions:
             continue
 
-        competition = competitions[0]
+        competition = (
+            competitions[0]
+        )
 
         status = (
             competition
@@ -1419,7 +1383,7 @@ def espn_games_for_team(
             "competitors",
             [],
         ):
-            competitor_id = str(
+            cid = str(
                 competitor.get(
                     "team",
                     {},
@@ -1429,11 +1393,8 @@ def espn_games_for_team(
                 )
             )
 
-            if competitor_id == str(
-                team_id
-            ):
+            if cid == str(team_id):
                 team_comp = competitor
-
             else:
                 opp_comp = competitor
 
@@ -1517,26 +1478,19 @@ def mlb_schedule(team_id):
     data = safe_get(
         f"{MLB_BASE}/schedule",
         params={
-            "sportId":
-                1,
-
-            "teamId":
-                team_id,
-
-            "season":
-                now_utc().year,
+            "sportId": 1,
+            "teamId": team_id,
+            "season": now_utc().year,
         },
     )
 
     return [
         game
-
         for day
         in data.get(
             "dates",
             [],
         )
-
         for game
         in day.get(
             "games",
@@ -1549,7 +1503,7 @@ def mlb_game_phase(game):
     game_type = str(
         game.get(
             "gameType",
-            ""
+            "",
         )
     ).upper()
 
@@ -1634,15 +1588,11 @@ def mlb_games_for_team(
             opp = home
 
         scored = as_number(
-            team.get(
-                "score"
-            )
+            team.get("score")
         )
 
         allowed = as_number(
-            opp.get(
-                "score"
-            )
+            opp.get("score")
         )
 
         if (
@@ -1714,7 +1664,9 @@ def current_nhl_season():
     ttl=600,
     show_spinner=False,
 )
-def nhl_schedule(abbreviation):
+def nhl_schedule(
+    abbreviation,
+):
     data = safe_get(
         f"{NHL_BASE}/club-schedule-season/"
         f"{abbreviation}/"
@@ -1840,7 +1792,7 @@ def nhl_games_for_team(
 
 
 # ============================================================
-# F1 CURRENT DATA
+# F1 STATS
 # ============================================================
 
 @st.cache_data(
@@ -1954,53 +1906,7 @@ def f1_snapshot(entity):
 
 
 # ============================================================
-# SERIES RECORD
-# ============================================================
-
-def current_series_record(
-    postseason_games,
-):
-    if not postseason_games:
-        return None
-
-    latest_opponent = (
-        postseason_games[-1][
-            "opponent"
-        ]
-    )
-
-    same_opponent = [
-        game
-        for game
-        in postseason_games
-
-        if game[
-            "opponent"
-        ] == latest_opponent
-    ]
-
-    if not same_opponent:
-        return None
-
-    wins = sum(
-        game["result"] == "W"
-        for game in same_opponent
-    )
-
-    losses = sum(
-        game["result"] == "L"
-        for game in same_opponent
-    )
-
-    return (
-        latest_opponent,
-        wins,
-        losses,
-    )
-
-
-# ============================================================
-# BUILD TEAM SNAPSHOT
+# GAME DISPATCH
 # ============================================================
 
 def team_games(
@@ -2044,6 +1950,10 @@ def team_games(
     return []
 
 
+# ============================================================
+# SNAPSHOT
+# ============================================================
+
 def build_snapshot(
     sport,
     entity,
@@ -2068,32 +1978,29 @@ def build_snapshot(
     regular = [
         game
         for game in games
-        if game["phase"]
-        == "Regular Season"
+        if game[
+            "phase"
+        ] == "Regular Season"
     ]
 
     postseason = [
         game
         for game in games
-        if game["phase"]
-        == "Postseason"
+        if game[
+            "phase"
+        ] == "Postseason"
     ]
 
     if phase == "Postseason":
-        # Key fix:
-        # postseason debates require postseason data.
-        if not postseason:
-            return None
-
-        active_games = postseason
+        active = postseason
 
     else:
-        active_games = regular
+        active = regular
 
-    if not active_games:
+    if not active:
         return None
 
-    snapshot = {
+    return {
         "phase":
             phase,
 
@@ -2104,10 +2011,8 @@ def build_snapshot(
             postseason,
 
         "active":
-            active_games,
+            active,
     }
-
-    return snapshot
 
 
 # ============================================================
@@ -2149,58 +2054,34 @@ def evidence_for_topic(
         if phase != "Postseason":
             return []
 
-        evidence.append(
+        recent = postseason[-5:]
+
+        evidence.extend([
             (
                 "Postseason record",
                 result_record(
                     postseason
                 ),
-            )
-        )
+            ),
 
-        series = current_series_record(
-            postseason
-        )
-
-        if series:
-            opponent, wins, losses = (
-                series
-            )
-
-            evidence.append(
-                (
-                    f"Current series vs. {opponent}",
-                    f"{wins}-{losses}",
-                )
-            )
-
-        last_games = (
-            postseason[-5:]
-        )
-
-        evidence.append(
-            (
-                "Postseason scoring average",
-                f"{average_scored(last_games):.1f}",
-            )
-        )
-
-        evidence.append(
-            (
-                "Postseason scoring allowed",
-                f"{average_allowed(last_games):.1f}",
-            )
-        )
-
-        evidence.append(
             (
                 "Latest postseason results",
                 recent_results(
                     postseason,
                     5,
                 ),
-            )
-        )
+            ),
+
+            (
+                "Postseason scoring average",
+                f"{average_scored(recent):.1f}",
+            ),
+
+            (
+                "Postseason scoring allowed",
+                f"{average_allowed(recent):.1f}",
+            ),
+        ])
 
         return evidence
 
@@ -2211,52 +2092,47 @@ def evidence_for_topic(
         if not regular:
             return []
 
-        evidence.append(
-            (
-                "Season record",
-                result_record(
-                    regular
-                ),
-            )
-        )
+        recent = regular[-10:]
 
         win_pct = win_percentage(
             regular
         )
 
-        if win_pct is not None:
-            evidence.append(
-                (
-                    "Season win percentage",
-                    f"{win_pct * 100:.1f}%",
-                )
-            )
+        evidence.extend([
+            (
+                "Season record",
+                result_record(
+                    regular
+                ),
+            ),
 
-        evidence.append(
+            (
+                "Season win percentage",
+                (
+                    f"{win_pct * 100:.1f}%"
+                    if win_pct is not None
+                    else "Unavailable"
+                ),
+            ),
+
             (
                 "Last 10 results",
                 recent_results(
-                    regular,
+                    recent,
                     10,
                 ),
-            )
-        )
+            ),
 
-        last10 = regular[-10:]
-
-        evidence.append(
             (
                 "Scoring average — last 10",
-                f"{average_scored(last10):.1f}",
-            )
-        )
+                f"{average_scored(recent):.1f}",
+            ),
 
-        evidence.append(
             (
                 "Scoring allowed — last 10",
-                f"{average_allowed(last10):.1f}",
-            )
-        )
+                f"{average_allowed(recent):.1f}",
+            ),
+        ])
 
         return evidence
 
@@ -2266,72 +2142,73 @@ def evidence_for_topic(
     ]:
         recent = active[-10:]
 
-        evidence.append(
+        differential = (
+            average_scored(
+                recent
+            )
+            - average_allowed(
+                recent
+            )
+        )
+
+        evidence.extend([
+            (
+                "Recent record",
+                result_record(
+                    recent
+                ),
+            ),
+
             (
                 "Last 10 results",
                 recent_results(
                     recent,
                     10,
                 ),
-            )
-        )
+            ),
 
-        evidence.append(
-            (
-                "Record over those games",
-                result_record(
-                    recent
-                ),
-            )
-        )
-
-        evidence.append(
             (
                 "Average scored — recent games",
                 f"{average_scored(recent):.1f}",
-            )
-        )
+            ),
 
-        evidence.append(
             (
                 "Average allowed — recent games",
                 f"{average_allowed(recent):.1f}",
-            )
-        )
+            ),
 
-        differential = (
-            average_scored(recent)
-            - average_allowed(recent)
-        )
-
-        evidence.append(
             (
-                "Recent scoring differential per game",
+                "Recent scoring differential",
                 f"{differential:+.1f}",
-            )
-        )
+            ),
+        ])
 
         return evidence
 
     if topic == "offense":
         recent = active[-10:]
 
-        evidence.append(
+        evidence.extend([
             (
                 "Average scored — last 10",
                 f"{average_scored(recent):.1f}",
-            )
-        )
+            ),
 
-        evidence.append(
+            (
+                "Recent record",
+                result_record(
+                    recent
+                ),
+            ),
+
             (
                 "Last 10 results",
                 recent_results(
                     recent,
                     10,
                 ),
-            )
-        )
+            ),
+        ])
 
         if regular:
             evidence.append(
@@ -2346,22 +2223,27 @@ def evidence_for_topic(
     if topic == "defense":
         recent = active[-10:]
 
-        evidence.append(
+        evidence.extend([
             (
                 "Average allowed — last 10",
                 f"{average_allowed(recent):.1f}",
-            )
-        )
+            ),
 
-        evidence.append(
+            (
+                "Recent record",
+                result_record(
+                    recent
+                ),
+            ),
+
             (
                 "Last 10 results",
                 recent_results(
                     recent,
                     10,
                 ),
-            )
-        )
+            ),
+        ])
 
         if regular:
             evidence.append(
@@ -2381,7 +2263,6 @@ def evidence_for_topic(
 # ============================================================
 
 def make_debate(
-    sport,
     entity_name,
     topic,
     phase,
@@ -2392,7 +2273,7 @@ def make_debate(
                 f"Does {entity_name} have what it takes to make a deep postseason run?",
 
             "side_a":
-                "YES — the team's current postseason results support the idea that it can keep advancing.",
+                "YES — the team's current postseason results suggest it can keep advancing.",
 
             "side_b":
                 "NO — weaknesses in the current postseason performance suggest the run may not last.",
@@ -2404,22 +2285,22 @@ def make_debate(
                 f"Is {entity_name} a legitimate championship contender right now?",
 
             "side_a":
-                "YES — the team's season performance and recent results support the contender label.",
+                "YES — the season record and recent performance support the contender label.",
 
             "side_b":
-                "NO — the numbers still show reasons to doubt whether the team belongs among the very best.",
+                "NO — the numbers still reveal reasons to doubt whether the team belongs among the very best.",
         }
 
     if topic == "concern":
         return {
             "question":
-                f"Should fans be seriously concerned about {entity_name}'s recent performance?",
+                f"Should fans be seriously concerned about {entity_name} right now?",
 
             "side_a":
-                "YES — the recent results suggest the problems may be more than a short slump.",
+                "YES — recent performance suggests the problems may be meaningful.",
 
             "side_b":
-                "NO — a short stretch of games should not outweigh the larger body of evidence.",
+                "NO — a short stretch should not outweigh the larger picture.",
         }
 
     if topic == "momentum":
@@ -2428,10 +2309,10 @@ def make_debate(
                 f"Is {entity_name}'s recent success likely to continue?",
 
             "side_a":
-                "YES — recent results and scoring trends show signs of sustainable improvement.",
+                "YES — recent results and scoring trends suggest the improvement may be sustainable.",
 
             "side_b":
-                "NO — the hot stretch may be temporary and based on a small sample.",
+                "NO — the hot stretch may be temporary or based on too small a sample.",
         }
 
     if topic == "offense":
@@ -2440,10 +2321,10 @@ def make_debate(
                 f"Is {entity_name}'s offense good enough to drive the team to success right now?",
 
             "side_a":
-                "YES — recent scoring data suggests the offense is producing enough.",
+                "YES — current scoring evidence suggests the offense is producing enough.",
 
             "side_b":
-                "NO — the current scoring numbers reveal important offensive concerns.",
+                "NO — recent scoring numbers reveal important offensive concerns.",
         }
 
     if topic == "defense":
@@ -2462,33 +2343,53 @@ def make_debate(
 
 
 # ============================================================
-# ARTICLE / TOPIC RELEVANCE
+# PICK BEST TOPIC FROM GROUP
 # ============================================================
 
-def article_matches_topic(
-    article,
-    topic,
+def choose_group_topic(
+    articles,
+    phase,
 ):
-    return (
-        classify_topic(
-            article["title"]
-        )
-        == topic
+    topic_counts = defaultdict(
+        int
     )
 
-
-def relevant_articles(
-    articles,
-    topic,
-):
-    return [
-        article
-        for article in articles
-        if article_matches_topic(
-            article,
-            topic,
+    for article in articles:
+        topic = classify_topic(
+            article[
+                "title"
+            ]
         )
-    ]
+
+        if (
+            topic
+            and phase_topic_allowed(
+                phase,
+                topic,
+            )
+        ):
+            topic_counts[
+                topic
+            ] += 1
+
+    if not topic_counts:
+        return None
+
+    # Give postseason preference
+    # when the sport is currently in postseason.
+    if (
+        phase == "Postseason"
+        and topic_counts.get(
+            "postseason",
+            0
+        ) > 0
+    ):
+        return "postseason"
+
+    return max(
+        topic_counts,
+        key=topic_counts.get,
+    )
 
 
 # ============================================================
@@ -2497,29 +2398,33 @@ def relevant_articles(
 
 def build_candidates(
     selected_sports,
-    window,
+    max_hours,
+    allow_single_source,
 ):
-    grouped = defaultdict(
+    groups = defaultdict(
         list
     )
 
-    scan_stats = {
-        "articles_seen": 0,
+    stats = {
         "fresh_articles": 0,
-        "matched_entities": 0,
-        "rejected_topics": 0,
-        "rejected_data": 0,
+        "entity_matches": 0,
+        "evidence_rejections": 0,
+        "topic_rejections": 0,
+        "single_source_accepts": 0,
+        "multi_source_accepts": 0,
     }
 
     for sport in selected_sports:
         articles = scan_google_news(
             sport,
-            window,
+            max_hours,
         )
 
-        scan_stats[
+        stats[
             "fresh_articles"
-        ] += len(articles)
+        ] += len(
+            articles
+        )
 
         entities = entities_for_sport(
             sport
@@ -2530,10 +2435,6 @@ def build_candidates(
         )
 
         for article in articles:
-            scan_stats[
-                "articles_seen"
-            ] += 1
-
             entity = find_entity(
                 article[
                     "title"
@@ -2544,8 +2445,8 @@ def build_candidates(
             if entity is None:
                 continue
 
-            scan_stats[
-                "matched_entities"
+            stats[
+                "entity_matches"
             ] += 1
 
             topic = classify_topic(
@@ -2554,35 +2455,40 @@ def build_candidates(
                 ]
             )
 
-            if topic is None:
-                continue
-
-            if not phase_topic_allowed(
-                sport,
-                phase,
-                topic,
+            if (
+                topic is None
+                or not phase_topic_allowed(
+                    phase,
+                    topic,
+                )
             ):
-                scan_stats[
-                    "rejected_topics"
+                stats[
+                    "topic_rejections"
                 ] += 1
 
                 continue
 
+            # Important V3 change:
+            # group by TEAM + BROAD TOPIC,
+            # not exact narrow topic.
             key = (
                 sport,
-                entity["id"],
-                topic,
+                entity[
+                    "id"
+                ],
+                broad_topic(
+                    topic
+                ),
             )
 
-            grouped[key].append({
+            groups[
+                key
+            ].append({
                 **article,
-
                 "entity":
                     entity,
-
                 "topic":
                     topic,
-
                 "phase":
                     phase,
             })
@@ -2592,28 +2498,41 @@ def build_candidates(
     for (
         sport,
         entity_id,
-        topic,
-    ), articles in grouped.items():
-
-        # Topic clustering:
-        # all articles in this group are about
-        # the same entity AND same debate category.
-        articles = relevant_articles(
-            articles,
-            topic,
-        )
-
-        unique_sources = set(
-            article["source"]
-            for article in articles
-        )
-
-        if len(unique_sources) < 2:
-            continue
+        broad,
+    ), articles in groups.items():
 
         entity = articles[0][
             "entity"
         ]
+
+        phase = articles[0][
+            "phase"
+        ]
+
+        topic = choose_group_topic(
+            articles,
+            phase,
+        )
+
+        if topic is None:
+            continue
+
+        sources = set(
+            article[
+                "source"
+            ]
+            for article in articles
+        )
+
+        source_count = len(
+            sources
+        )
+
+        if (
+            source_count < 2
+            and not allow_single_source
+        ):
+            continue
 
         snapshot = build_snapshot(
             sport,
@@ -2621,8 +2540,8 @@ def build_candidates(
         )
 
         if snapshot is None:
-            scan_stats[
-                "rejected_data"
+            stats[
+                "evidence_rejections"
             ] += 1
 
             continue
@@ -2633,53 +2552,66 @@ def build_candidates(
             snapshot,
         )
 
-        # Require multiple pieces of relevant data.
         if len(evidence) < 3:
-            scan_stats[
-                "rejected_data"
+            stats[
+                "evidence_rejections"
             ] += 1
 
             continue
 
         debate = make_debate(
-            sport,
-            entity["name"],
+            entity[
+                "name"
+            ],
             topic,
-            snapshot["phase"],
+            snapshot[
+                "phase"
+            ],
         )
 
         if debate is None:
             continue
 
-        # Freshness bonus.
         newest = max(
             article[
                 "published_dt"
             ]
-            for article
-            in articles
+            for article in articles
         )
 
-        age_hours = (
-            now_utc()
-            - newest
-        ).total_seconds() / 3600
+        age = article_age_hours(
+            newest
+        )
 
         freshness_score = max(
             0,
             24 - min(
-                age_hours,
+                age,
                 24,
             )
         )
 
+        if source_count >= 2:
+            confidence = "High"
+
+            stats[
+                "multi_source_accepts"
+            ] += 1
+
+        else:
+            confidence = "Medium"
+
+            stats[
+                "single_source_accepts"
+            ] += 1
+
         score = (
-            len(
-                unique_sources
-            ) * 10
-            + len(
-                articles
+            source_count * 10
+            + min(
+                len(articles),
+                5,
             ) * 3
+            + len(evidence) * 2
             + freshness_score
         )
 
@@ -2701,8 +2633,8 @@ def build_candidates(
             "articles":
                 sorted(
                     articles,
-                    key=lambda a:
-                        a[
+                    key=lambda x:
+                        x[
                             "published_dt"
                         ],
                     reverse=True,
@@ -2727,9 +2659,10 @@ def build_candidates(
                 ],
 
             "source_count":
-                len(
-                    unique_sources
-                ),
+                source_count,
+
+            "confidence":
+                confidence,
 
             "score":
                 score,
@@ -2737,8 +2670,8 @@ def build_candidates(
 
     candidates = sorted(
         candidates,
-        key=lambda candidate:
-            candidate[
+        key=lambda x:
+            x[
                 "score"
             ],
         reverse=True,
@@ -2746,7 +2679,100 @@ def build_candidates(
 
     return (
         candidates,
-        scan_stats,
+        stats,
+    )
+
+
+# ============================================================
+# TIERED SCAN
+# ============================================================
+
+def run_tiered_scan(
+    selected_sports,
+):
+    attempts = []
+
+    # PASS 1
+    candidates, stats = (
+        build_candidates(
+            selected_sports,
+            24,
+            False,
+        )
+    )
+
+    attempts.append(
+        "24 hours • multi-source only"
+    )
+
+    if candidates:
+        return (
+            candidates,
+            stats,
+            attempts,
+            "Strict 24-hour scan",
+        )
+
+    # PASS 2
+    candidates, stats = (
+        build_candidates(
+            selected_sports,
+            24,
+            True,
+        )
+    )
+
+    attempts.append(
+        "24 hours • one source allowed with strong verified data"
+    )
+
+    if candidates:
+        return (
+            candidates,
+            stats,
+            attempts,
+            "Expanded 24-hour scan",
+        )
+
+    # PASS 3
+    candidates, stats = (
+        build_candidates(
+            selected_sports,
+            48,
+            False,
+        )
+    )
+
+    attempts.append(
+        "48 hours • multi-source only"
+    )
+
+    if candidates:
+        return (
+            candidates,
+            stats,
+            attempts,
+            "Strict 48-hour fallback",
+        )
+
+    # PASS 4
+    candidates, stats = (
+        build_candidates(
+            selected_sports,
+            48,
+            True,
+        )
+    )
+
+    attempts.append(
+        "48 hours • one source allowed with strong verified data"
+    )
+
+    return (
+        candidates,
+        stats,
+        attempts,
+        "Expanded 48-hour fallback",
     )
 
 
@@ -2763,8 +2789,8 @@ st.markdown(
 </div>
 
 <div class="hero-sub">
-Scan what is happening in sports right now,
-verify the evidence, and build a debate students can actually defend.
+Scan current sports news, verify the evidence,
+and build a debate students can actually defend.
 </div>
 
 </div>
@@ -2774,7 +2800,7 @@ verify the evidence, and build a debate students can actually defend.
 
 
 # ============================================================
-# TEACHER SETTINGS
+# SETTINGS
 # ============================================================
 
 with st.expander(
@@ -2801,49 +2827,35 @@ with st.expander(
         ],
     )
 
-    col1, col2 = st.columns(2)
-
-    with col1:
-        news_window = st.selectbox(
-            "News window",
-            [
-                "Past 24 Hours",
-                "Past 48 Hours",
-                "Past 7 Days",
-            ],
-            index=0,
-        )
-
-    with col2:
-        number_of_debates = st.selectbox(
-            "Maximum debates to show",
-            [
-                1,
-                2,
-                3,
-                5,
-            ],
-            index=2,
-        )
+    number_of_debates = st.selectbox(
+        "Maximum debates to show",
+        [
+            1,
+            2,
+            3,
+            5,
+        ],
+        index=2,
+    )
 
     st.caption(
-        "The app rejects old articles, unsupported debate types, "
-        "offseason questions without meaningful current data, and debates "
-        "whose statistics do not match the topic."
+        "Version 3 automatically starts with a strict 24-hour scan. "
+        "If nothing qualifies, it gradually loosens the source requirement "
+        "and then expands to 48 hours."
     )
 
 
 # ============================================================
-# CURRENT PHASES
+# CURRENT SPORTS CALENDAR
 # ============================================================
 
 with st.expander(
     "🗓️ Current Sports Calendar",
 ):
-    phase_rows = []
+    rows = []
 
     for sport in selected_sports:
-        phase_rows.append({
+        rows.append({
             "Sport":
                 sport,
 
@@ -2853,10 +2865,10 @@ with st.expander(
                 ),
         })
 
-    if phase_rows:
+    if rows:
         st.dataframe(
             pd.DataFrame(
-                phase_rows
+                rows
             ),
             hide_index=True,
             use_container_width=True,
@@ -2864,7 +2876,7 @@ with st.expander(
 
 
 # ============================================================
-# SCAN BUTTON
+# SCAN
 # ============================================================
 
 if st.button(
@@ -2874,63 +2886,71 @@ if st.button(
 ):
     if not selected_sports:
         st.warning(
-            "Select at least one sport."
+            "Choose at least one sport."
         )
-
         st.stop()
 
     progress = st.progress(
         0
     )
 
-    message = st.empty()
+    status = st.empty()
 
-    message.write(
-        "### Step 1 of 5 — Checking article dates..."
+    status.write(
+        "### Step 1 of 5 — Searching current sports coverage..."
     )
-    progress.progress(15)
+    progress.progress(20)
 
-    message.write(
-        "### Step 2 of 5 — Matching current stories to teams..."
+    status.write(
+        "### Step 2 of 5 — Grouping related stories..."
     )
-    progress.progress(35)
+    progress.progress(40)
 
-    message.write(
-        "### Step 3 of 5 — Identifying the actual debate topic..."
+    status.write(
+        "### Step 3 of 5 — Checking the current sport season phase..."
     )
-    progress.progress(55)
+    progress.progress(60)
 
-    message.write(
-        "### Step 4 of 5 — Retrieving topic-specific sports data..."
+    status.write(
+        "### Step 4 of 5 — Retrieving relevant verified statistics..."
     )
-    progress.progress(75)
+    progress.progress(80)
 
     with st.spinner(
-        "Scanning fresh sports news and verifying evidence..."
+        "Scanning and checking debate quality..."
     ):
         (
             candidates,
             scan_stats,
-        ) = build_candidates(
-            selected_sports,
-            news_window,
+            attempts,
+            scan_mode,
+        ) = run_tiered_scan(
+            selected_sports
         )
 
-    message.write(
-        "### Step 5 of 5 — Rejecting weak or irrelevant debates..."
+    status.write(
+        "### Step 5 of 5 — Ranking the strongest debates..."
     )
     progress.progress(100)
 
-    message.empty()
+    status.empty()
     progress.empty()
 
     st.session_state[
-        "debate_candidates_v2"
+        "debate_candidates_v3"
     ] = candidates
 
     st.session_state[
-        "scan_stats_v2"
+        "scan_stats_v3"
     ] = scan_stats
+
+    st.session_state[
+        "scan_attempts_v3"
+    ] = attempts
+
+    st.session_state[
+        "scan_mode_v3"
+    ] = scan_mode
 
 
 # ============================================================
@@ -2938,27 +2958,49 @@ if st.button(
 # ============================================================
 
 candidates = st.session_state.get(
-    "debate_candidates_v2"
+    "debate_candidates_v3"
 )
 
 
 if candidates is None:
     st.info(
-        "Press **SCAN CURRENT SPORTS NEWS** to search for today's debates."
+        "Press **SCAN CURRENT SPORTS NEWS** to find today's debates."
     )
-
     st.stop()
 
 
 scan_stats = st.session_state.get(
-    "scan_stats_v2",
-    {},
+    "scan_stats_v3",
+    {}
+)
+
+scan_attempts = st.session_state.get(
+    "scan_attempts_v3",
+    []
+)
+
+scan_mode = st.session_state.get(
+    "scan_mode_v3",
+    "",
 )
 
 
 with st.expander(
-    "🔍 What the scan checked",
+    "🔍 How this scan worked",
 ):
+    st.write(
+        f"**Successful scan mode:** {scan_mode}"
+    )
+
+    st.write(
+        "**Attempts made:**"
+    )
+
+    for attempt in scan_attempts:
+        st.write(
+            f"• {attempt}"
+        )
+
     cols = st.columns(4)
 
     cols[0].metric(
@@ -2970,25 +3012,25 @@ with st.expander(
     )
 
     cols[1].metric(
-        "Team/entity matches",
+        "Entity matches",
         scan_stats.get(
-            "matched_entities",
+            "entity_matches",
             0,
         ),
     )
 
     cols[2].metric(
-        "Topics rejected",
+        "Topic rejections",
         scan_stats.get(
-            "rejected_topics",
+            "topic_rejections",
             0,
         ),
     )
 
     cols[3].metric(
-        "Data mismatches rejected",
+        "Evidence rejections",
         scan_stats.get(
-            "rejected_data",
+            "evidence_rejections",
             0,
         ),
     )
@@ -2996,9 +3038,9 @@ with st.expander(
 
 if not candidates:
     st.warning(
-        "The scan did not find a debate that passed all of the freshness, "
-        "source, topic, and evidence checks. Try expanding the news window to "
-        "48 hours or 7 days. This is intentional—the app will not force a weak debate."
+        "No debate passed even the expanded 48-hour scan. "
+        "That means the app could not find a current topic with enough relevant verified evidence. "
+        "Try selecting additional sports."
     )
 
     st.stop()
@@ -3010,7 +3052,7 @@ shown = candidates[
 
 
 st.success(
-    f"{len(candidates)} debate candidate(s) passed all verification checks."
+    f"Found {len(candidates)} usable current debate candidate(s)."
 )
 
 
@@ -3030,18 +3072,40 @@ for index, candidate in enumerate(
             f"## Debate #{index}"
         )
 
-    st.markdown(
-        f"""
-<div class="phase-card">
+    if (
+        candidate[
+            "confidence"
+        ] == "High"
+    ):
+        st.markdown(
+            f"""
+<div class="conf-high">
 
-<b>Sport:</b> {candidate['sport']}<br>
-<b>Current phase:</b> {candidate['phase']}<br>
-<b>Detected topic:</b> {candidate['topic'].replace('_',' ').title()}<br>
-<b>Independent current sources:</b> {candidate['source_count']}
+<b>Confidence: HIGH</b><br>
+Multiple current sources + verified relevant sports data
 
 </div>
 """,
-        unsafe_allow_html=True,
+            unsafe_allow_html=True,
+        )
+
+    else:
+        st.markdown(
+            f"""
+<div class="conf-med">
+
+<b>Confidence: MEDIUM</b><br>
+One strong current source + multiple pieces of verified relevant sports data
+
+</div>
+""",
+            unsafe_allow_html=True,
+        )
+
+    st.caption(
+        f"{candidate['sport']} • "
+        f"{candidate['phase']} • "
+        f"{candidate['source_count']} current source(s)"
     )
 
     st.write(
@@ -3085,20 +3149,19 @@ for index, candidate in enumerate(
 
 
     # ========================================================
-    # VERIFIED EVIDENCE
+    # DATA POOL
     # ========================================================
 
     st.write(
-        "### 📊 Relevant Verified Data"
+        "### 📊 Relevant Verified Data Pool"
     )
 
     st.markdown(
         """
 <div class="data-note">
 
-These statistics were selected <b>because they match this debate topic</b>.
-A postseason debate uses postseason information. A slump debate uses recent
-performance. An offensive debate uses scoring information.
+The app selected these statistics because they match the debate.
+It does not automatically use the same data for every topic.
 
 </div>
 """,
@@ -3123,7 +3186,7 @@ performance. An offensive debate uses scoring information.
 
 
     # ========================================================
-    # CURRENT NEWS
+    # CURRENT REPORTING
     # ========================================================
 
     st.write(
@@ -3146,7 +3209,9 @@ performance. An offensive debate uses scoring information.
             unsafe_allow_html=True,
         )
 
-        if article["link"]:
+        if article[
+            "link"
+        ]:
             st.link_button(
                 f"Open article — {article['source']}",
                 article[
@@ -3191,6 +3256,6 @@ performance. An offensive debate uses scoring information.
 st.markdown("---")
 
 st.caption(
-    "This app separates current reporting from verified sports data. "
-    "It also rejects debates when the available evidence does not match the question."
+    "Version 3 prioritizes fresh reporting, current-season context, "
+    "relevant verified statistics, and strong evidence over simply generating a debate."
 )
